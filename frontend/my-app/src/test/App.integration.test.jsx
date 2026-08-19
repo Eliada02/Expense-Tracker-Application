@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
 import { ThemeProvider } from '../context/ThemeContext';
 import { ToastProvider } from '../context/ToastContext';
+import { AuthProvider } from '../context/AuthContext';
 import { apiClient } from '../services/apiClient';
 import { EXPENSE_CATEGORIES, PAYMENT_METHODS, makeExpense } from './fixtures';
 
@@ -55,7 +56,10 @@ const insightsPayload = {
   ],
 };
 
+const DEMO_USER = { _id: 'u1', name: 'Ada Lovelace', email: 'ada@example.com' };
+
 const routeHandlers = {
+  '/auth/me': () => envelope(DEMO_USER),
   '/categories': () => envelope({ expense: EXPENSE_CATEGORIES, income: [] }),
   '/payment-methods': () => envelope(PAYMENT_METHODS),
   '/config': () => envelope({ currency: 'EUR', timezone: 'UTC', frequencies: ['weekly', 'monthly', 'yearly'] }),
@@ -98,7 +102,9 @@ const renderApp = (route = '/') => {
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           <MemoryRouter initialEntries={[route]}>
-            <App />
+            <AuthProvider>
+              <App />
+            </AuthProvider>
           </MemoryRouter>
         </ToastProvider>
       </QueryClientProvider>
@@ -119,7 +125,8 @@ describe('application shell', () => {
   it('renders the sidebar with every route', async () => {
     renderApp();
 
-    const nav = screen.getByRole('navigation', { name: /main navigation/i });
+    // The shell only mounts once the session has been resolved.
+    const nav = await screen.findByRole('navigation', { name: /main navigation/i });
     ['Dashboard', 'Expenses', 'Income', 'Budgets', 'Insights', 'Recurring', 'Settings'].forEach(
       (label) => {
         expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument();
@@ -130,7 +137,7 @@ describe('application shell', () => {
   it('navigates between pages without a full reload', async () => {
     const user = renderApp();
 
-    await user.click(screen.getByRole('link', { name: 'Budgets' }));
+    await user.click(await screen.findByRole('link', { name: 'Budgets' }));
 
     expect(await screen.findByRole('heading', { name: 'Budgets', level: 1 })).toBeInTheDocument();
   });
@@ -144,7 +151,7 @@ describe('application shell', () => {
   it('toggles dark mode and persists the choice', async () => {
     const user = renderApp();
 
-    await user.click(screen.getByRole('button', { name: /switch to dark mode/i }));
+    await user.click(await screen.findByRole('button', { name: /switch to dark mode/i }));
 
     expect(document.documentElement.dataset.theme).toBe('dark');
     expect(localStorage.getItem('expense-tracker-theme')).toBe('dark');

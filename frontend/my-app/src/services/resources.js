@@ -56,6 +56,14 @@ export const analyticsApi = {
     apiClient.get('/insights', { params: cleanParams(params) }).then(unwrap),
 };
 
+export const authApi = {
+  register: (payload) => apiClient.post('/auth/register', payload).then(unwrap),
+  login: (payload) => apiClient.post('/auth/login', payload).then(unwrap),
+  logout: () => apiClient.post('/auth/logout').then((res) => res.data),
+  /** Resolves the current session. 401 here simply means "signed out". */
+  me: () => apiClient.get('/auth/me').then(unwrap),
+};
+
 export const metaApi = {
   categories: () => apiClient.get('/categories').then(unwrap),
   paymentMethods: () => apiClient.get('/payment-methods').then(unwrap),

@@ -1,10 +1,16 @@
 'use strict';
 
-const { api } = require('./helpers');
+const { api, signIn } = require('./helpers');
 const Recurring = require('../models/Recurring');
 const Expense = require('../models/Expense');
 const { runDueRecurring } = require('../services/recurringService');
 const { parseCalendarDate } = require('../utils/dates');
+
+let currentUser;
+
+beforeEach(async () => {
+  ({ user: currentUser } = await signIn());
+});
 
 const validRule = (overrides = {}) => ({
   title: 'Internet',
@@ -24,6 +30,7 @@ const seedRule = (overrides = {}) => {
   const rule = validRule(overrides);
   return Recurring.create({
     ...rule,
+    user: currentUser._id,
     startDate: parseCalendarDate(rule.startDate),
     endDate: rule.endDate ? parseCalendarDate(rule.endDate) : null,
     nextRunDate: parseCalendarDate(rule.startDate),
@@ -37,7 +44,7 @@ describe('recurring materialisation', () => {
   it('creates one expense per due occurrence', async () => {
     await seedRule();
     // Rule starts 15 Jan 2024, so by 20 Mar 2024 three occurrences are due.
-    const created = await runDueRecurring(new Date('2024-03-20T00:00:00Z'));
+    const created = await runDueRecurring(currentUser._id, new Date('2024-03-20T00:00:00Z'));
 
     expect(created).toBe(3);
     expect(await expenseDates()).toEqual(['2024-01-15', '2024-02-15', '2024-03-15']);
@@ -50,22 +57,22 @@ describe('recurring materialisation', () => {
   it('is idempotent when run repeatedly for the same instant', async () => {
     await seedRule();
 
-    await runDueRecurring(new Date('2024-03-20T00:00:00Z'));
-    await runDueRecurring(new Date('2024-03-20T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-03-20T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-03-20T00:00:00Z'));
 
     expect(await Expense.countDocuments()).toBe(3);
   });
 
   it('clamps a rule that starts on the 31st to shorter months', async () => {
     await seedRule({ frequency: 'monthly', startDate: '2024-01-31' });
-    await runDueRecurring(new Date('2024-04-01T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-04-01T00:00:00Z'));
 
     expect(await expenseDates()).toEqual(['2024-01-31', '2024-02-29', '2024-03-31']);
   });
 
   it('handles weekly rules', async () => {
     await seedRule({ frequency: 'weekly', startDate: '2024-05-01' });
-    await runDueRecurring(new Date('2024-05-22T13:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-05-22T13:00:00Z'));
 
     expect(await expenseDates()).toEqual([
       '2024-05-01',
@@ -77,14 +84,14 @@ describe('recurring materialisation', () => {
 
   it('handles yearly rules', async () => {
     await seedRule({ frequency: 'yearly', startDate: '2022-03-01' });
-    await runDueRecurring(new Date('2024-06-01T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-06-01T00:00:00Z'));
 
     expect(await expenseDates()).toEqual(['2022-03-01', '2023-03-01', '2024-03-01']);
   });
 
   it('stops at the end date and deactivates the rule', async () => {
     await seedRule({ endDate: '2024-02-20' });
-    await runDueRecurring(new Date('2024-06-01T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-06-01T00:00:00Z'));
 
     expect(await Expense.countDocuments()).toBe(2);
     expect((await Recurring.findOne()).active).toBe(false);
@@ -92,14 +99,14 @@ describe('recurring materialisation', () => {
 
   it('ignores inactive rules', async () => {
     await seedRule({ active: false });
-    await runDueRecurring(new Date('2024-06-01T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-06-01T00:00:00Z'));
 
     expect(await Expense.countDocuments()).toBe(0);
   });
 
   it('generates nothing before the start date', async () => {
     await seedRule({ startDate: '2030-01-01' });
-    await runDueRecurring(new Date('2024-06-01T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-06-01T00:00:00Z'));
 
     expect(await Expense.countDocuments()).toBe(0);
   });
@@ -125,7 +132,7 @@ describe('recurring API', () => {
 
   it('does not regenerate history when only the amount is edited', async () => {
     const rule = await seedRule();
-    await runDueRecurring(new Date('2024-03-20T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-03-20T00:00:00Z'));
     const before = await Expense.countDocuments();
 
     const res = await api().put(`/api/recurring/${rule._id}`).send(validRule({ amount: 45 }));
@@ -137,7 +144,7 @@ describe('recurring API', () => {
 
   it('rewinds the cursor when the schedule itself changes', async () => {
     const rule = await seedRule();
-    await runDueRecurring(new Date('2024-03-20T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-03-20T00:00:00Z'));
 
     await api()
       .put(`/api/recurring/${rule._id}`)
@@ -161,7 +168,7 @@ describe('recurring API', () => {
 
   it('keeps already generated expenses when the rule is deleted', async () => {
     const rule = await seedRule();
-    await runDueRecurring(new Date('2024-03-20T00:00:00Z'));
+    await runDueRecurring(currentUser._id, new Date('2024-03-20T00:00:00Z'));
 
     const res = await api().delete(`/api/recurring/${rule._id}`);
 

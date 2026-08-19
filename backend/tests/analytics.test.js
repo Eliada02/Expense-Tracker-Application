@@ -1,6 +1,10 @@
 'use strict';
 
-const { api, createExpense } = require('./helpers');
+const { api, signIn, createExpense } = require('./helpers');
+
+beforeEach(async () => {
+  await signIn();
+});
 
 const seedTwoMonths = async () => {
   // April: 100

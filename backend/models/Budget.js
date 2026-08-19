@@ -10,6 +10,12 @@ const { EXPENSE_CATEGORY_IDS } = require('../constants/taxonomy');
  */
 const BudgetSchema = new mongoose.Schema(
   {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
     category: {
       type: String,
       default: null,
@@ -29,7 +35,9 @@ const BudgetSchema = new mongoose.Schema(
   }
 );
 
-// At most one budget per category (and one overall budget).
-BudgetSchema.index({ category: 1 }, { unique: true });
+// At most one budget per category per user (and one overall budget each).
+// The uniqueness must be scoped to the owner, otherwise the first user to
+// budget for "food" would block everyone else from doing the same.
+BudgetSchema.index({ user: 1, category: 1 }, { unique: true });
 
 module.exports = mongoose.model('Budget', BudgetSchema);

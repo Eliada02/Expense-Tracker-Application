@@ -20,22 +20,22 @@ const money = (value) =>
 
 const pct = (value) => `${Math.abs(value).toFixed(1)}%`;
 
-const byCategory = (range) =>
+const byCategory = (userId, range) =>
   Expense.aggregate([
-    { $match: { date: { $gte: range.start, $lt: range.end } } },
+    { $match: { user: userId, date: { $gte: range.start, $lt: range.end } } },
     { $group: { _id: '$category', total: { $sum: '$amount' } } },
   ]);
 
-const totals = (range) =>
+const totals = (userId, range) =>
   Expense.aggregate([
-    { $match: { date: { $gte: range.start, $lt: range.end } } },
+    { $match: { user: userId, date: { $gte: range.start, $lt: range.end } } },
     { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
   ]);
 
 /** Spend per weekday over the last three months, to have enough signal. */
-const byWeekday = (start, end) =>
+const byWeekday = (userId, start, end) =>
   Expense.aggregate([
-    { $match: { date: { $gte: start, $lt: end } } },
+    { $match: { user: userId, date: { $gte: start, $lt: end } } },
     {
       $group: {
         _id: { $dayOfWeek: { date: '$date', timezone: env.APP_TIMEZONE } },
@@ -51,7 +51,7 @@ const byWeekday = (start, end) =>
  * database. Every number below comes from an aggregation – nothing is faked,
  * and an insight is omitted entirely when there is not enough data for it.
  */
-const getInsights = async ({ month } = {}) => {
+const getInsights = async (userId, { month } = {}) => {
   const monthKey = month || currentMonthKey();
   const prevKey = shiftMonthKey(monthKey, -1);
   const range = monthRange(monthKey);
@@ -59,12 +59,12 @@ const getInsights = async ({ month } = {}) => {
   const weekdayStart = monthRange(shiftMonthKey(monthKey, -2)).start;
 
   const [current, previous, currentCats, previousCats, weekdayRows, budgets] = await Promise.all([
-    totals(range),
-    totals(prevRange),
-    byCategory(range),
-    byCategory(prevRange),
-    byWeekday(weekdayStart, range.end),
-    getBudgetOverview(monthKey),
+    totals(userId, range),
+    totals(userId, prevRange),
+    byCategory(userId, range),
+    byCategory(userId, prevRange),
+    byWeekday(userId, weekdayStart, range.end),
+    getBudgetOverview(userId, monthKey),
   ]);
 
   const monthTotal = current[0]?.total ?? 0;

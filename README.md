@@ -11,6 +11,7 @@ spending insights, recurring expenses and CSV/JSON export.
 
 | Area | What it does |
 | --- | --- |
+| **Accounts** | Email and password registration, sign-in and sign-out. Every expense, budget and rule belongs to one user and is invisible to everyone else |
 | **Dashboard** | Six summary cards (total, this month, last month, daily average, highest expense, transaction count) plus category, monthly-comparison and cumulative-spend charts |
 | **Expenses** | Full CRUD with search, category / payment-method / month / date-range filters, sorting and pagination |
 | **Income** | The same screen, backed by a separate collection, so the balance stays accurate |
@@ -64,6 +65,10 @@ somewhere else.
 | `APP_TIMEZONE` | no | `UTC` | Timezone used to bucket expenses into days and months. Set this to your own zone, e.g. `Europe/Rome`. |
 | `CURRENCY` | no | `EUR` | ISO 4217 code used to format amounts |
 | `NODE_ENV` | no | `development` | `development` \| `production` \| `test` |
+| `JWT_SECRET` | **yes** | — | Secret used to sign session tokens. Generate with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`. Changing it signs everyone out. |
+| `JWT_EXPIRES_IN` | no | `7d` | Session lifetime (`7d`, `12h`, `30m`) |
+| `COOKIE_SAMESITE` | no | `lax` | `lax` suits localhost. A frontend on a different site needs `none`. |
+| `COOKIE_SECURE` | no | on in production | Send the cookie over HTTPS only |
 
 ### `frontend/my-app/.env`
 
@@ -174,8 +179,12 @@ All responses use one envelope:
 
 | Method | Endpoint | Notes |
 | --- | --- | --- |
-| `GET` | `/api/health` | Liveness check |
-| `GET` | `/api/categories` | Expense and income categories with labels and colours |
+| `POST` | `/api/auth/register` | Public. Creates an account and starts a session |
+| `POST` | `/api/auth/login` | Public. Starts a session |
+| `POST` | `/api/auth/logout` | Clears the session cookie |
+| `GET` | `/api/auth/me` | The signed-in user, or 401 |
+| `GET` | `/api/health` | Public. Liveness check |
+| `GET` | `/api/categories` | Public. Expense and income categories with labels and colours |
 | `GET` | `/api/payment-methods` | Payment method list |
 | `GET` | `/api/config` | Currency, timezone, recurrence frequencies |
 | `GET` | `/api/expenses` | `search`, `category`, `paymentMethod`, `month`, `from`, `to`, `minAmount`, `maxAmount`, `sortBy`, `sortDir`, `page`, `limit` |
@@ -191,6 +200,9 @@ All responses use one envelope:
 | `PUT` | `/api/budgets` | Upsert by category (`null` = overall) |
 | `DELETE` | `/api/budgets/:id` | |
 | `GET/POST/PUT/DELETE` | `/api/recurring[/:id]` | |
+
+Every endpoint below `/api/auth` and the four public ones above requires a
+valid session cookie; without one they return `401`.
 
 ---
 
@@ -231,8 +243,48 @@ matches your calendar.
 
 ## Security
 
+### Authentication
+
+Session JWTs are delivered in an **httpOnly cookie**, not in the response body.
+Client-side JavaScript can never read the token, which removes the XSS
+token-theft path that comes with keeping one in `localStorage`.
+
+- Passwords are hashed with **bcrypt** at cost factor 12. The plaintext is
+  never stored or logged.
+- `passwordHash` is `select: false` on the schema and stripped again in
+  `toJSON`, so it cannot leak through a controller that forgets to remove it.
+- Login answers identically for an unknown email and a wrong password, and
+  hashes a throwaway value when no account exists so the response time does not
+  reveal which addresses are registered.
+- `/api/auth/login` and `/api/auth/register` are rate limited to 20 failed
+  attempts per 15 minutes, separately from the global limit.
+- The signing secret comes from `JWT_SECRET`; the server refuses to boot
+  without it outside tests.
+- The middleware reloads the user on every request, so a deleted account stops
+  working immediately rather than when its token expires.
+
+### Authorization
+
+Every financial document carries a `user` reference, and **the owner is taken
+from the verified session cookie — never from the request body or query.**
+
+- `requireAuth` is applied once in `routes/index.js` above every data router,
+  so a new router cannot be mounted unprotected by accident.
+- Reads, updates and deletes all match on `{ _id, user }` together, so a
+  request for someone else's record returns `404` rather than `403` — that
+  avoids confirming the id exists.
+- Aggregations for the dashboard, insights and budgets start with a `$match` on
+  the owner, since pipelines bypass the usual query helpers.
+- Budget uniqueness is `{ user, category }`, so two users can each budget for
+  the same category.
+- Generated recurring expenses inherit their rule's owner, never a
+  caller-supplied value.
+
+### Transport and input
+
 - **Helmet** for security headers
-- **CORS** restricted to `CLIENT_URL`; unlisted origins are rejected
+- **CORS** restricted to `CLIENT_URL` with `credentials: true`; an unlisted
+  origin gets a `403`
 - **Rate limiting** — 600 requests / 15 min on `/api`
 - **Zod validation** on every body, query and param. Controllers only ever see
   parsed, coerced values, which makes Mongo operator injection
@@ -241,14 +293,6 @@ matches your calendar.
 - JSON body limit of 100 kB
 - Errors are mapped centrally; **stack traces are never returned in production**
 - Secrets come from environment variables only, and `.env` is git-ignored
-
-**There is no authentication.** This is a deliberate decision: the app is a
-single-user personal tracker, and adding accounts, sessions and per-user data
-scoping would be a large amount of complexity for no benefit locally. The
-consequence is that **the API must not be exposed to the public internet as-is**
-— if you deploy it, put authentication in front of it first.
-
----
 
 ## Testing
 

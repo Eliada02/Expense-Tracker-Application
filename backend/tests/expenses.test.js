@@ -1,6 +1,11 @@
 'use strict';
 
-const { api, validExpense, createExpense } = require('./helpers');
+const { api, signIn, validExpense, createExpense } = require('./helpers');
+
+// Every data route now requires a session, so each test starts signed in.
+beforeEach(async () => {
+  await signIn();
+});
 
 describe('POST /api/expenses', () => {
   it('creates an expense and returns it', async () => {

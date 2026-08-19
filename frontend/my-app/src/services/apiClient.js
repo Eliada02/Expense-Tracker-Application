@@ -10,6 +10,9 @@ export const apiClient = axios.create({
   baseURL,
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' },
+  // The session lives in an httpOnly cookie, which the browser only attaches
+  // to cross-origin requests when credentials are explicitly enabled.
+  withCredentials: true,
 });
 
 /** Error shape the whole UI can rely on, whatever went wrong. */
@@ -25,6 +28,17 @@ export class ApiError extends Error {
 
 const NETWORK_MESSAGE =
   'Could not reach the server. Check that the API is running and try again.';
+
+/**
+ * Broadcast when the API rejects a request as unauthenticated, so the auth
+ * layer can drop the stale session. An event keeps this module free of any
+ * React or router imports.
+ */
+export const SESSION_EXPIRED_EVENT = 'expense-tracker:session-expired';
+
+// `/auth/me` returning 401 is the normal signed-out answer, and a failed login
+// is not an expiring session - neither should trigger the broadcast.
+const isSessionProbe = (url = '') => url.includes('/auth/me') || url.includes('/auth/login');
 
 /**
  * Normalises every failure into an ApiError. Without this each caller would
@@ -44,6 +58,10 @@ apiClient.interceptors.response.use(
     const fieldErrors = Object.fromEntries(
       (data?.errors ?? []).map((e) => [e.field, e.message])
     );
+
+    if (status === 401 && !isSessionProbe(error.config?.url)) {
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+    }
 
     return Promise.reject(
       new ApiError(data?.message || 'Something went wrong. Please try again.', {
