@@ -4,6 +4,7 @@ import styled from 'styled-components';
 import { Menu, Moon, Sun } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Button from '../ui/Button';
+import UserMenu from '../../features/auth/UserMenu';
 import { useTheme } from '../../context/ThemeContext';
 
 const Shell = styled.div`
@@ -57,6 +58,12 @@ const Spacer = styled.div`
   flex: 1;
 `;
 
+const Divider = styled.span`
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+`;
+
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
@@ -85,6 +92,8 @@ export function AppLayout() {
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </Button>
+          <Divider aria-hidden="true" />
+          <UserMenu />
         </Topbar>
         <Content>
           <Outlet />
