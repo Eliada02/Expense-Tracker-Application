@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Fail loudly if 5173 is taken rather than silently drifting to 5174 and
+    // leaving the browser on an origin the API does not recognise.
+    strictPort: true,
     // The API base URL is configurable via VITE_API_URL; the proxy is only a
     // convenience so a plain `npm run dev` works with no .env at all.
     proxy: {
