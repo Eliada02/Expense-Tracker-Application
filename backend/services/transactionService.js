@@ -5,12 +5,16 @@ const { parseCalendarDate, monthRange } = require('../utils/dates');
 const { escapeRegex } = require('../utils/regex');
 
 /**
- * Translates validated query params into a Mongo filter. Every value has
- * already been through Zod, so no raw user object ever reaches the query –
- * this is what keeps operator-injection (`{"$gt": ""}`) impossible.
+ * Translates validated query params into a Mongo filter, always scoped to the
+ * owner. Every value has already been through Zod, so no raw user object ever
+ * reaches the query - that is what keeps operator injection (`{"$gt": ""}`)
+ * impossible.
+ *
+ * `userId` is a required first argument rather than an optional field on
+ * `query`, so it is impossible to build an unscoped filter by accident.
  */
-const buildFilter = (query = {}) => {
-  const filter = {};
+const buildFilter = (userId, query = {}) => {
+  const filter = { user: userId };
 
   if (query.category) filter.category = query.category;
   if (query.paymentMethod) filter.paymentMethod = query.paymentMethod;
@@ -51,12 +55,16 @@ const buildSort = ({ sortBy = 'date', sortDir = 'desc' }) => {
 /**
  * Generic CRUD for a transaction-shaped model. Expense and income controllers
  * both delegate here instead of duplicating the same six handlers.
+ *
+ * Reads and writes are matched on `{ _id, user }` together. A request for
+ * someone else's document therefore returns "not found" rather than a 403,
+ * which avoids confirming that the id exists at all.
  */
 const createTransactionService = (Model, label) => ({
   buildFilter,
 
-  async list(query) {
-    const filter = buildFilter(query);
+  async list(userId, query) {
+    const filter = buildFilter(userId, query);
     const { page, limit } = query;
     const skip = (page - 1) * limit;
 
@@ -78,23 +86,29 @@ const createTransactionService = (Model, label) => ({
     };
   },
 
-  async findAll(query) {
-    return Model.find(buildFilter(query)).sort(buildSort(query)).lean();
+  async findAll(userId, query) {
+    return Model.find(buildFilter(userId, query)).sort(buildSort(query)).lean();
   },
 
-  async getById(id) {
-    const doc = await Model.findById(id).lean();
+  async getById(userId, id) {
+    const doc = await Model.findOne({ _id: id, user: userId }).lean();
     if (!doc) throw ApiError.notFound(`${label} not found`);
     return doc;
   },
 
-  async create(payload) {
-    return Model.create({ ...payload, date: parseCalendarDate(payload.date) });
+  async create(userId, payload) {
+    return Model.create({
+      ...payload,
+      user: userId,
+      date: parseCalendarDate(payload.date),
+    });
   },
 
-  async update(id, payload) {
-    const doc = await Model.findByIdAndUpdate(
-      id,
+  async update(userId, id, payload) {
+    const doc = await Model.findOneAndUpdate(
+      { _id: id, user: userId },
+      // `user` is not spread from the payload, so a client cannot reassign
+      // ownership of a record by sending a different id.
       { ...payload, date: parseCalendarDate(payload.date) },
       { new: true, runValidators: true }
     );
@@ -102,8 +116,8 @@ const createTransactionService = (Model, label) => ({
     return doc;
   },
 
-  async remove(id) {
-    const doc = await Model.findByIdAndDelete(id);
+  async remove(userId, id) {
+    const doc = await Model.findOneAndDelete({ _id: id, user: userId });
     if (!doc) throw ApiError.notFound(`${label} not found`);
     return doc;
   },

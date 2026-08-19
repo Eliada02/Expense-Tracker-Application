@@ -11,18 +11,27 @@ const { addRecurrence, parseCalendarDate } = require('../utils/dates');
  */
 const MAX_OCCURRENCES_PER_RUN = 120;
 
-let lastRunAt = 0;
 const THROTTLE_MS = 60 * 1000;
 
 /**
- * Materialises every due occurrence of every active recurring rule into real
- * expenses. Called lazily before read-heavy endpoints, which avoids adding a
- * scheduler for what is a once-a-day job at most.
+ * Throttle is per user rather than global. A shared timestamp would mean one
+ * active user suppressing everyone else's rules for a minute.
+ */
+const lastRunByUser = new Map();
+
+/**
+ * Materialises every due occurrence of the given user's active recurring rules
+ * into real expenses. Called lazily before read-heavy endpoints, which avoids
+ * adding a scheduler for what is a once-a-day job at most.
  *
  * @returns {Promise<number>} number of expenses created
  */
-const runDueRecurring = async (now = new Date()) => {
-  const rules = await Recurring.find({ active: true, nextRunDate: { $lte: now } });
+const runDueRecurring = async (userId, now = new Date()) => {
+  const rules = await Recurring.find({
+    user: userId,
+    active: true,
+    nextRunDate: { $lte: now },
+  });
   if (!rules.length) return 0;
 
   const expensesToCreate = [];
@@ -39,6 +48,9 @@ const runDueRecurring = async (now = new Date()) => {
       if (rule.endDate && cursor > rule.endDate) break;
 
       expensesToCreate.push({
+        // Generated expenses inherit the rule's owner, never a caller-supplied
+        // value, so a rule can only ever create rows for its own user.
+        user: rule.user,
         title: rule.title,
         amount: rule.amount,
         category: rule.category,
@@ -69,16 +81,23 @@ const runDueRecurring = async (now = new Date()) => {
 };
 
 /**
- * Express middleware that runs the materialiser at most once a minute. Failures
- * are logged but never block the request the user actually asked for.
+ * Express middleware that runs the materialiser for the signed-in user at most
+ * once a minute. Failures are logged but never block the request the user
+ * actually asked for.
+ *
+ * Must run after requireAuth, since it needs to know whose rules to process.
  */
 const materialiseRecurring = async (req, res, next) => {
+  const userId = req.user?._id;
+  if (!userId) return next();
+
+  const key = String(userId);
   const now = Date.now();
-  if (now - lastRunAt < THROTTLE_MS) return next();
-  lastRunAt = now;
+  if (now - (lastRunByUser.get(key) ?? 0) < THROTTLE_MS) return next();
+  lastRunByUser.set(key, now);
 
   try {
-    await runDueRecurring();
+    await runDueRecurring(userId);
   } catch (error) {
     console.error('[recurring] failed to materialise due expenses', error);
   }
@@ -90,7 +109,7 @@ const initialNextRunDate = (payload) => parseCalendarDate(payload.startDate);
 
 /** Resets the throttle. Used by tests. */
 const resetThrottle = () => {
-  lastRunAt = 0;
+  lastRunByUser.clear();
 };
 
 module.exports = {

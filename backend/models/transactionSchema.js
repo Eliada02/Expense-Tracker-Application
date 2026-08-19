@@ -11,6 +11,13 @@ const { PAYMENT_METHOD_IDS } = require('../constants/taxonomy');
 const buildTransactionSchema = ({ type, categories }) => {
   const schema = new mongoose.Schema(
     {
+      /** Owner. Every query is scoped by this; nothing is global. */
+      user: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+        index: true,
+      },
       title: {
         type: String,
         required: [true, 'Title is required'],
@@ -69,9 +76,10 @@ const buildTransactionSchema = ({ type, categories }) => {
     }
   );
 
-  // Dashboard and list queries are always "recent first, optionally by category".
-  schema.index({ date: -1, _id: -1 });
-  schema.index({ category: 1, date: -1 });
+  // Every query starts with the owner, so `user` leads both indexes. Without
+  // that prefix Mongo would scan another user's documents before filtering.
+  schema.index({ user: 1, date: -1, _id: -1 });
+  schema.index({ user: 1, category: 1, date: -1 });
 
   return schema;
 };

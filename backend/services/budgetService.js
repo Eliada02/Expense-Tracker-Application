@@ -36,18 +36,18 @@ const buildLine = (budget, spent) => {
 /**
  * Budgets joined with what was actually spent in the requested month.
  */
-const getBudgetOverview = async (month) => {
+const getBudgetOverview = async (userId, month) => {
   const monthKey = month || currentMonthKey();
   const { start, end } = monthRange(monthKey);
 
   const [budgets, categoryRows, totalRows] = await Promise.all([
-    Budget.find().lean(),
+    Budget.find({ user: userId }).lean(),
     Expense.aggregate([
-      { $match: { date: { $gte: start, $lt: end } } },
+      { $match: { user: userId, date: { $gte: start, $lt: end } } },
       { $group: { _id: '$category', total: { $sum: '$amount' } } },
     ]),
     Expense.aggregate([
-      { $match: { date: { $gte: start, $lt: end } } },
+      { $match: { user: userId, date: { $gte: start, $lt: end } } },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ]),
   ]);
@@ -70,9 +70,9 @@ const getBudgetOverview = async (month) => {
 };
 
 /** Creates or replaces the budget for a category (or the overall budget). */
-const upsertBudget = async ({ category, amount }) =>
+const upsertBudget = async (userId, { category, amount }) =>
   Budget.findOneAndUpdate(
-    { category: category ?? null },
+    { user: userId, category: category ?? null },
     { $set: { amount } },
     { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
   );

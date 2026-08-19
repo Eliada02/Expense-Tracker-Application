@@ -10,26 +10,36 @@ const CATEGORY_BY_ID = new Map(EXPENSE_CATEGORIES.map((c) => [c.id, c]));
 
 const sumOf = (rows) => rows[0]?.total ?? 0;
 
+/**
+ * Every pipeline below starts by matching the owner. Aggregations bypass the
+ * usual query helpers, so forgetting this here would silently mix other
+ * users' spending into the numbers.
+ */
+const ownedBy = (userId, range) => ({
+  user: userId,
+  ...(range ? { date: { $gte: range.start, $lt: range.end } } : {}),
+});
+
 /** `{ total, count }` for a model over an optional date range. */
-const aggregateTotals = (Model, range) =>
+const aggregateTotals = (Model, userId, range) =>
   Model.aggregate([
-    ...(range ? [{ $match: { date: { $gte: range.start, $lt: range.end } } }] : []),
+    { $match: ownedBy(userId, range) },
     { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
   ]);
 
 /** Expense totals grouped by category for one month. */
-const aggregateByCategory = (range) =>
+const aggregateByCategory = (userId, range) =>
   Expense.aggregate([
-    { $match: { date: { $gte: range.start, $lt: range.end } } },
+    { $match: ownedBy(userId, range) },
     { $group: { _id: '$category', total: { $sum: '$amount' }, count: { $sum: 1 } } },
     { $sort: { total: -1 } },
   ]);
 
 /** Expense + income totals per month over a half-open range. */
-const aggregateMonthly = async (start, end) => {
+const aggregateMonthly = async (userId, start, end) => {
   const group = (Model, field) =>
     Model.aggregate([
-      { $match: { date: { $gte: start, $lt: end } } },
+      { $match: { user: userId, date: { $gte: start, $lt: end } } },
       {
         $group: {
           _id: {
@@ -49,9 +59,9 @@ const aggregateMonthly = async (start, end) => {
 };
 
 /** Daily expense totals inside one month. */
-const aggregateDaily = (range) =>
+const aggregateDaily = (userId, range) =>
   Expense.aggregate([
-    { $match: { date: { $gte: range.start, $lt: range.end } } },
+    { $match: ownedBy(userId, range) },
     {
       $group: {
         _id: {
@@ -67,7 +77,7 @@ const aggregateDaily = (range) =>
 const buildMonthSeries = (endMonthKey, count) =>
   Array.from({ length: count }, (_, i) => shiftMonthKey(endMonthKey, i - (count - 1)));
 
-const getDashboard = async ({ month, months }) => {
+const getDashboard = async (userId, { month, months }) => {
   const monthKey = month || currentMonthKey();
   const prevMonthKey = shiftMonthKey(monthKey, -1);
   const range = monthRange(monthKey);
@@ -88,18 +98,15 @@ const getDashboard = async ({ month, months }) => {
     highestRows,
     monthly,
   ] = await Promise.all([
-    aggregateTotals(Expense),
-    aggregateTotals(Income),
-    aggregateTotals(Expense, range),
-    aggregateTotals(Expense, prevRange),
-    aggregateTotals(Income, range),
-    aggregateByCategory(range),
-    aggregateDaily(range),
-    Expense.find({ date: { $gte: range.start, $lt: range.end } })
-      .sort({ amount: -1 })
-      .limit(1)
-      .lean(),
-    aggregateMonthly(trendStart, trendEnd),
+    aggregateTotals(Expense, userId),
+    aggregateTotals(Income, userId),
+    aggregateTotals(Expense, userId, range),
+    aggregateTotals(Expense, userId, prevRange),
+    aggregateTotals(Income, userId, range),
+    aggregateByCategory(userId, range),
+    aggregateDaily(userId, range),
+    Expense.find(ownedBy(userId, range)).sort({ amount: -1 }).limit(1).lean(),
+    aggregateMonthly(userId, trendStart, trendEnd),
   ]);
 
   const monthTotal = sumOf(monthExpenses);
